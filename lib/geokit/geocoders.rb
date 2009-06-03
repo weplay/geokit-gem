@@ -1,5 +1,5 @@
 require 'net/http'
-require 'rexml/document'
+require 'nokogiri'
 require 'yaml'
 require 'timeout'
 require 'logger'
@@ -192,9 +192,9 @@ module Geokit
         xml = res.body
         logger.debug "Geocoder.ca geocoding. Address: #{address}. Result: #{xml}"
         # Parse the document.
-        doc = REXML::Document.new(xml)    
-        address.lat = doc.elements['//latt'].text
-        address.lng = doc.elements['//longt'].text
+        doc = Nokogiri::XML(xml)
+        address.lat = doc.at('//latt').text
+        address.lng = doc.at('//longt').text
         address.success = true
         return address
       rescue
@@ -280,24 +280,24 @@ module Geokit
         res = self.call_geocoder_service(url)
         return GeoLoc.new if !res.is_a?(Net::HTTPSuccess)
         xml = res.body
-        doc = REXML::Document.new(xml)
+        doc = Nokogiri::XML(xml)
         logger.debug "Yahoo geocoding. Address: #{address}. Result: #{xml}"
 
-        if doc.elements['//ResultSet']
+        if doc.at('ResultSet')
           res=GeoLoc.new
 
           #basic      
-          res.lat=doc.elements['//Latitude'].text
-          res.lng=doc.elements['//Longitude'].text
-          res.country_code=doc.elements['//Country'].text
+          res.lat=doc.at('Latitude').text
+          res.lng=doc.at('Longitude').text
+          res.country_code=doc.at('Country').text
           res.provider='yahoo'  
 
           #extended - false if not available
-          res.city=doc.elements['//City'].text if doc.elements['//City'] && doc.elements['//City'].text != nil
-          res.state=doc.elements['//State'].text if doc.elements['//State'] && doc.elements['//State'].text != nil
-          res.zip=doc.elements['//Zip'].text if doc.elements['//Zip'] && doc.elements['//Zip'].text != nil
-          res.street_address=doc.elements['//Address'].text if doc.elements['//Address'] && doc.elements['//Address'].text != nil
-          res.precision=doc.elements['//Result'].attributes['precision'] if doc.elements['//Result']
+          res.city=doc.at('City').text if doc.at('City') && doc.at('City').text != nil && doc.at('City').text != ""
+          res.state=doc.at('State').text if doc.at('State') && doc.at('State').text != nil && doc.at('State').text != ""
+          res.zip=doc.at('Zip').text if doc.at('Zip') && doc.at('Zip').text != nil && doc.at('Zip').text != ""
+          res.street_address=doc.at('Address').text if doc.at('Address') && doc.at('Address').text != nil && doc.at('Address').text != ""
+          res.precision=doc.at('Result').attributes['precision'].value if doc.at('Result')
           res.success=true
           return res
         else 
@@ -336,28 +336,28 @@ module Geokit
         
         xml=res.body
         logger.debug "Geonames geocoding. Address: #{address}. Result: #{xml}"
-        doc=REXML::Document.new(xml)
+        doc=Nokogiri::XML(xml)
         
         if(doc.elements['//geonames/totalResultsCount'].text.to_i > 0)
           res=GeoLoc.new
         
           # only take the first result
-          res.lat=doc.elements['//code/lat'].text if doc.elements['//code/lat']
-          res.lng=doc.elements['//code/lng'].text if doc.elements['//code/lng']
-          res.country_code=doc.elements['//code/countryCode'].text if doc.elements['//code/countryCode']
+          res.lat=doc.at('//code/lat').text if doc.at('//code/lng')
+          res.lng=doc.at('//code/lng').text if doc.at('//code/lng')
+          res.country_code=doc.at('//code/countryCode').text if doc.at('//code/countryCode')
           res.provider='genomes'  
-          res.city=doc.elements['//code/name'].text if doc.elements['//code/name']
-          res.state=doc.elements['//code/adminName1'].text if doc.elements['//code/adminName1']
-          res.zip=doc.elements['//code/postalcode'].text if doc.elements['//code/postalcode']
+          res.city=doc.at('//code/name').text if doc.at('//code/name')
+          res.state=doc.at('//code/adminName1').text if doc.at('//code/adminName1')
+          res.zip=doc.at('//code/postalcode').text if doc.at('//code/postalcode')
           res.success=true
           return res
         else 
           logger.info "Geonames was unable to geocode address: "+address
           return GeoLoc.new
         end
-        
-        rescue
-          logger.error "Caught an error during Geonames geocoding call: "+$!
+        # 
+        # rescue
+        #   logger.error "Caught an error during Geonames geocoding call: "+$!
       end
     end
 
@@ -393,13 +393,13 @@ module Geokit
       end
       
       def self.xml2GeoLoc(xml, address="")
-        doc=REXML::Document.new(xml)
+        doc = Nokogiri::XML(xml)
 
-        if doc.elements['//kml/Response/Status/code'].text == '200'
+        if doc.at('kml/Response/Status/code').text == '200'
           geoloc = nil
           # Google can return multiple results as //Placemark elements. 
           # iterate through each and extract each placemark as a geoloc
-          doc.each_element('//Placemark') do |e|
+          doc.search('Placemark').each do |e|
             extracted_geoloc = extract_placemark(e) # g is now an instance of Geoloc
             if geoloc.nil? 
               # first time through, geoloc is still nil, so we make it the geoloc we just extracted
@@ -424,24 +424,24 @@ module Geokit
       # extracts a single geoloc from a //placemark element in the google results xml
       def self.extract_placemark(doc)
         res = GeoLoc.new
-        coordinates=doc.elements['.//coordinates'].text.to_s.split(',')
+        coordinates=doc.at('coordinates').text.to_s.split(',')
 
         #basics
         res.lat=coordinates[1]
         res.lng=coordinates[0]
-        res.country_code=doc.elements['.//CountryNameCode'].text if doc.elements['.//CountryNameCode']
+        res.country_code=doc.at(".//*[local-name() = 'CountryNameCode']").text if doc.at(".//*[local-name() = 'CountryNameCode']")
         res.provider='google'
 
         #extended -- false if not not available
-        res.city = doc.elements['.//LocalityName'].text if doc.elements['.//LocalityName']
-        res.state = doc.elements['.//AdministrativeAreaName'].text if doc.elements['.//AdministrativeAreaName']
-        res.full_address = doc.elements['.//address'].text if doc.elements['.//address'] # google provides it
-        res.zip = doc.elements['.//PostalCodeNumber'].text if doc.elements['.//PostalCodeNumber']
-        res.street_address = doc.elements['.//ThoroughfareName'].text if doc.elements['.//ThoroughfareName']
+        res.city = doc.at(".//*[local-name() = 'LocalityName']").text if doc.at(".//*[local-name() = 'LocalityName']")
+        res.state = doc.at(".//*[local-name() = 'AdministrativeAreaName']").text if doc.at(".//*[local-name() = 'AdministrativeAreaName']")
+        res.full_address = doc.at('address').text if doc.at('address') # google provides it
+        res.zip = doc.at(".//*[local-name() = 'PostalCodeNumber']").text if doc.at(".//*[local-name() = 'PostalCodeNumber']")
+        res.street_address = doc.at(".//*[local-name() = 'ThoroughfareName']").text if doc.at(".//*[local-name() = 'ThoroughfareName']")
         # Translate accuracy into Yahoo-style token address, street, zip, zip+4, city, state, country
         # For Google, 1=low accuracy, 8=high accuracy
-        address_details=doc.elements['.//*[local-name() = "AddressDetails"]']
-        accuracy = address_details ? address_details.attributes['Accuracy'].to_i : 0
+        address_details=doc.at('.//*[local-name() = "AddressDetails"]')
+        accuracy = address_details ? address_details.attributes['Accuracy'].value.to_i : 0
         res.precision=%w{unknown country state state city zip zip+4 street address building}[accuracy]
         res.success=true
         
@@ -468,14 +468,14 @@ module Geokit
       end
 
       def self.parse_xml(xml)
-        xml = REXML::Document.new(xml)
+        xml = Nokogiri::XML(xml)
         geo = GeoLoc.new
         geo.provider='geoPlugin'
-        geo.city = xml.elements['//geoplugin_city'].text
-        geo.state = xml.elements['//geoplugin_region'].text
-        geo.country_code = xml.elements['//geoplugin_countryCode'].text
-        geo.lat = xml.elements['//geoplugin_latitude'].text.to_f
-        geo.lng = xml.elements['//geoplugin_longitude'].text.to_f
+        geo.city = xml.at('geoplugin_city').text
+        geo.state = xml.at('geoplugin_region').text
+        geo.country_code = xml.at('geoplugin_countryCode').text
+        geo.lat = xml.at('geoplugin_latitude').text.to_f
+        geo.lng = xml.at('geoplugin_longitude').text.to_f
         geo.success = !geo.city.empty?
         return geo
       end
